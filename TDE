@@ -1,0 +1,28 @@
+--step 1 
+use master
+go
+create master key encryption by password='MYTDE'
+Go
+--step 2
+create certificate mycert with subject ='TDE Certificate'
+Go
+
+--step 3
+Backup certificate mycert 
+--location 
+to file='C:\Program Files\Microsoft SQL Server\MSSQL15.AZURE\MSSQL\Backup\mycert.cer'
+with private key
+(
+file='C:\Program Files\Microsoft SQL Server\MSSQL15.AZURE\MSSQL\Backup\mycert_PrivateKey.pvk',
+encryption by password='Test123'
+);
+
+--step 4
+use [DummyDB5]
+create Database encryption key
+with algorithm=AES_256
+Encryption by server certificate mycert
+
+--step 5
+Alter database [DummyDB5] set encryption on
+
