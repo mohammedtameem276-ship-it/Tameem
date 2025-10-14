@@ -1,0 +1,185 @@
+/* 
+  Usage:
+  - Paste your list into the #ImportLogins table (or use BULK INSERT to populate it).
+  - Columns: Username, Password, AccessLevel, DatabaseName
+    AccessLevel examples:
+      Server roles: SYSADMIN, SECURITYADMIN, SERVERADMIN, PROCESSADMIN, SETUPADMIN, BULKADMIN, DISKADMIN, DBCREATOR
+      DB roles:    DB_OWNER, DB_READER, DB_WRITER, DB_READER_WRITER, CUSTOM_ROLE_NAME
+    DatabaseName: name of DB where a user should be created (NULL if only a server-role login is required).
+*/
+
+-- DROP if already exists (for reruns)
+IF OBJECT_ID('tempdb..#ImportLogins') IS NOT NULL DROP TABLE #ImportLogins;
+
+CREATE TABLE #ImportLogins (
+    Username       NVARCHAR(128) NOT NULL,
+    Password       NVARCHAR(256) NOT NULL,
+    AccessLevel    NVARCHAR(128) NULL,   -- e.g. 'SYSADMIN' or 'DB_OWNER' or 'DB_READER_WRITER' or custom DB role
+    DatabaseName   NVARCHAR(128) NULL    -- target database for DB-level roles; NULL if not needed
+);
+
+-- =========================
+-- Example rows (replace or bulk insert 600 rows here)
+-- =========================
+INSERT INTO #ImportLogins (Username, Password, AccessLevel, DatabaseName)
+VALUES
+  ('user001','ComplexP@ssw0rd1','DB_READER_WRITER','DummyDB1'),
+  ('user002','AnotherP@ss1','DB_READER','DummyDB1'),
+  ('svc_backup','BkupP@ss2025','SERVER:BULKADMIN', NULL),
+  ('admin01','Adm1nP@ss!','SERVER:SYSADMIN', NULL)
+;
+Go
+-- For your 600 accounts: either generate INSERTs or use BULK INSERT / OPENROWSET to populate #ImportLogins
+
+-- Example BULK INSERT (uncomment & adjust file path if you prefer)
+-- BULK file format should match columns: Username,Password,AccessLevel,DatabaseName (CSV)
+-- BULK INSERT #ImportLogins FROM 'C:\temp\logins.csv' WITH (FIELDTERMINATOR = ',', ROWTERMINATOR = '\n');
+
+-- ============================================
+-- Helper: function-like logic to escape single quotes
+-- ============================================
+/*CREATE FUNCTION dbo.EscapeSingleQuotes(@s NVARCHAR(MAX))
+RETURNS NVARCHAR(MAX) WITH SCHEMABINDING
+AS
+BEGIN
+    RETURN REPLACE(@s, '''', '''''');
+END;
+GO
+*/
+
+-- ============================================
+-- Process rows: create login + assign server role or DB user + DB role
+-- ============================================
+SET NOCOUNT ON;
+
+DECLARE
+    @Username       NVARCHAR(128),
+    @Password       NVARCHAR(256),
+    @AccessLevel    NVARCHAR(128),
+    @DatabaseName   NVARCHAR(128),
+    @sql            NVARCHAR(MAX);
+
+DECLARE cur CURSOR LOCAL FAST_FORWARD FOR
+    SELECT Username, Password, AccessLevel, DatabaseName
+    FROM #ImportLogins;
+
+OPEN cur;
+FETCH NEXT FROM cur INTO @Username, @Password, @AccessLevel, @DatabaseName;
+
+WHILE @@FETCH_STATUS = 0
+BEGIN
+    -- Normalize values
+    SET @Username = LTRIM(RTRIM(@Username));
+    SET @Password = ISNULL(@Password, '');
+    SET @AccessLevel = UPPER(LTRIM(RTRIM(ISNULL(@AccessLevel, ''))));
+    SET @DatabaseName = NULLIF(LTRIM(RTRIM(ISNULL(@DatabaseName, ''))), '');
+
+    -- Escape single quotes in literals
+DECLARE @uEsc NVARCHAR(MAX) = REPLACE(@Username, '''', '''''');
+DECLARE @pEsc NVARCHAR(MAX) = REPLACE(@Password, '''', '''''');
+
+    -- 1) Create login if it doesn't exist.
+    IF NOT EXISTS (SELECT 1 FROM sys.server_principals WHERE name = @Username)
+    BEGIN
+        -- If you'd like to disable password policy checks, add CHECK_POLICY = OFF
+        SET @sql = N'CREATE LOGIN ' + QUOTENAME(@Username) 
+                   + N' WITH PASSWORD = N''' + @pEsc + N''', CHECK_EXPIRATION = OFF, CHECK_POLICY = ON;';
+        PRINT 'Creating login: ' + @Username;
+        EXEC sp_executesql @sql;
+    END
+    ELSE
+    BEGIN
+        PRINT 'Login already exists: ' + @Username;
+    END
+
+    -- 2) If AccessLevel indicates a server role (prefix "SERVER:" optionally) -> add server role
+    --    We'll accept values like "SERVER:SYSADMIN" or simply "SYSADMIN"
+    DECLARE @roleName NVARCHAR(128) = NULL;
+    IF @AccessLevel LIKE 'SERVER:%'
+        SET @roleName = SUBSTRING(@AccessLevel, 8, 200);
+    ELSE IF @AccessLevel IN ('SYSADMIN','SECURITYADMIN','SERVERADMIN','PROCESSADMIN','SETUPADMIN','BULKADMIN','DISKADMIN','DBCREATOR')
+        SET @roleName = @AccessLevel;
+
+    IF @roleName IS NOT NULL AND @roleName <> ''
+    BEGIN
+        SET @roleName = LTRIM(RTRIM(@roleName));
+        -- check role exists on server
+        IF EXISTS (SELECT 1 FROM sys.server_principals WHERE name = @roleName AND type_desc = 'SERVER_ROLE')
+        BEGIN
+            -- use ALTER SERVER ROLE ... ADD MEMBER
+            SET @sql = N'ALTER SERVER ROLE ' + QUOTENAME(@roleName) + N' ADD MEMBER ' + QUOTENAME(@Username) + N';';
+            BEGIN TRY
+                EXEC sp_executesql @sql;
+                PRINT 'Added ' + @Username + ' to server role ' + @roleName;
+            END TRY
+            BEGIN CATCH
+                PRINT 'Warning adding to server role: ' + ERROR_MESSAGE();
+            END CATCH;
+        END
+        ELSE
+        BEGIN
+            PRINT 'Server role not found: ' + @roleName + ' (skipping server-role assignment for ' + @Username + ')';
+        END
+    END
+
+    -- 3) If a DatabaseName is provided, create a user in that DB mapped to the login and assign DB role(s)
+    IF @DatabaseName IS NOT NULL
+    BEGIN
+        -- Build DB-level commands to run in the target DB
+        DECLARE @dbCmd NVARCHAR(MAX) = N'USE ' + QUOTENAME(@DatabaseName) + N';' + CHAR(13) + CHAR(10);
+
+        -- Create user if not exists
+        SET @dbCmd += N'IF NOT EXISTS (SELECT 1 FROM sys.database_principals WHERE name = N''' + @uEsc + N''')' + CHAR(13) + CHAR(10)
+                   + N'  CREATE USER ' + QUOTENAME(@Username) + N' FOR LOGIN ' + QUOTENAME(@Username) + N';' + CHAR(13) + CHAR(10);
+
+        -- Map known shorthand DB roles
+        IF @AccessLevel IN ('DB_READER','DB_READER_WRITER','DB_WRITER','DB_OWNER','DB_OWNER') OR @AccessLevel LIKE 'DB_%' OR (@AccessLevel IS NOT NULL AND @AccessLevel <> '')
+        BEGIN
+            -- convert commonly used tokens into roles:
+            DECLARE @dbRoleCmd NVARCHAR(MAX) = N'';
+
+            IF @AccessLevel IN ('DB_READER','DB_READ')
+                SET @dbRoleCmd = N'ALTER ROLE db_datareader ADD MEMBER ' + QUOTENAME(@Username) + N';';
+            ELSE IF @AccessLevel IN ('DB_WRITER','DB_WRITE')
+                SET @dbRoleCmd = N'ALTER ROLE db_datawriter ADD MEMBER ' + QUOTENAME(@Username) + N';';
+            ELSE IF @AccessLevel IN ('DB_READER_WRITER','DB_READWRITE','DB_READ_WRITE')
+                SET @dbRoleCmd = N'ALTER ROLE db_datareader ADD MEMBER ' + QUOTENAME(@Username) + N';' + CHAR(13) + CHAR(10)
+                                + N'ALTER ROLE db_datawriter ADD MEMBER ' + QUOTENAME(@Username) + N';';
+            ELSE IF @AccessLevel IN ('DB_OWNER','DB_OWNER_ROLE')
+                SET @dbRoleCmd = N'ALTER ROLE db_owner ADD MEMBER ' + QUOTENAME(@Username) + N';';
+            ELSE
+            BEGIN
+                -- If AccessLevel contains a custom DB role name (e.g., "MyAppRole"), use it
+                -- Strip optional leading "DB:" prefix
+                DECLARE @possible NVARCHAR(128) = @AccessLevel;
+                IF LEFT(@possible,3) = 'DB:'
+                    SET @possible = SUBSTRING(@possible,4,128);
+                -- if non-empty, try to add to that role
+                IF @possible <> ''
+                    SET @dbRoleCmd = N'IF EXISTS (SELECT 1 FROM sys.database_principals WHERE name = N''' + dbo.EscapeSingleQuotes(@possible) + N''')' + CHAR(13) + CHAR(10)
+                                   + N'  ALTER ROLE ' + QUOTENAME(@possible) + N' ADD MEMBER ' + QUOTENAME(@Username) + N';' + CHAR(13) + CHAR(10)
+                                   + N'ELSE' + CHAR(13) + CHAR(10)
+                                   + N'  PRINT ''DB role not found: ' + dbo.EscapeSingleQuotes(@possible) + N' (skipping)'';';
+            END
+
+            SET @dbCmd += @dbRoleCmd;
+        END
+
+        -- Execute DB commands inside TRY/CATCH to avoid full abort if DB missing or role missing
+        BEGIN TRY
+            PRINT 'Creating DB user / assigning DB role for ' + @Username + ' in DB ' + @DatabaseName;
+            EXEC sp_executesql @dbCmd;
+        END TRY
+        BEGIN CATCH
+            PRINT 'Error when handling DB ' + ISNULL(@DatabaseName,'<NULL>') + ': ' + ERROR_MESSAGE();
+        END CATCH;
+    END
+
+    FETCH NEXT FROM cur INTO @Username, @Password, @AccessLevel, @DatabaseName;
+END
+
+CLOSE cur;
+DEALLOCATE cur;
+
+-- cleanup helper function (optional)
+/* DROP FUNCTION dbo.EscapeSingleQuotes; -- uncomment to remove helper function if you want */
