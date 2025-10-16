@@ -1,0 +1,26 @@
+SELECT
+db.name AS DatabaseName,
+db.is encrypted AS IsEncrypted,
+CASE db is encrypted
+WHEN 1 THEN 'TDE Enabled'
+WHEN 0 THEN 'TDE Not Enabled'
+END AS IDE Status,
+dm.encryption state AS EncryptionState,
+CASE dm.encryption state
+WHEN 0 THEN 'No encryption'
+WHEN 1 THEN 'Unencrypted'
+WHEN 2 THEN 'Encryption in progress'
+WHEN 3 THEN 'Encrypted'
+WHEN 4 THEN 'Key change in progress'
+WHEN 5 THEN 'Decryption in progress'
+WHEN 6 THEN 'Protection change in progress'
+END AS EncryptionStateDescription
+FROM
+sys databases db
+LEFT JOIN
+sys. dm database encryption keys dm
+ON db.database id = dm.database id
+WHERE
+db.database id > 4 -- Exclude system databases
+ORDER BY
+db.name;
