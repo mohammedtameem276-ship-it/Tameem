@@ -1,0 +1,26 @@
+SELECT 
+    db.name AS DatabaseName,
+    db.database_id,
+    CASE 
+        WHEN db.is_encrypted = 1 THEN 'Encrypted (TDE Enabled)'
+        ELSE 'Not Encrypted'
+    END AS EncryptionStatus,
+    dm.encryption_state,
+    CASE dm.encryption_state
+        WHEN 0 THEN 'No database encryption key present, no encryption'
+        WHEN 1 THEN 'Unencrypted'
+        WHEN 2 THEN 'Encryption in progress'
+        WHEN 3 THEN 'Encrypted'
+        WHEN 4 THEN 'Key change in progress'
+        WHEN 5 THEN 'Decryption in progress'
+        WHEN 6 THEN 'Protection change in progress'
+        ELSE 'Unknown'
+    END AS EncryptionStateDescription,
+    dm.percent_complete AS EncryptionProgress,
+    dm.encryptor_type,
+    dm.key_algorithm,
+    dm.key_length
+FROM sys.databases AS db
+LEFT JOIN sys.dm_database_encryption_keys AS dm
+    ON db.database_id = dm.database_id
+ORDER BY db.name;
