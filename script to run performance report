@@ -1,0 +1,77 @@
+ 1️⃣ CPU-Intensive Queries (last week)
+PRINT '--- TOP CPU QUERIES (Last 7 Days) ---';
+SELECT TOP 10
+    DB_NAME(st.dbid) AS DatabaseName,
+    qs.execution_count,
+    qs.total_worker_time/1000 AS TotalCPU_ms,
+    qs.total_elapsed_time/1000 AS TotalDuration_ms,
+    qs.last_execution_time,
+    SUBSTRING(st.text, (qs.statement_start_offset/2)+1,
+        ((CASE qs.statement_end_offset
+          WHEN -1 THEN DATALENGTH(st.text)
+          ELSE qs.statement_end_offset END
+          - qs.statement_start_offset)/2) + 1) AS QueryText
+FROM sys.dm_exec_query_stats AS qs
+CROSS APPLY sys.dm_exec_sql_text(qs.sql_handle) AS st
+WHERE qs.last_execution_time >= DATEADD(DAY, -7, GETDATE())
+ORDER BY TotalCPU_ms DESC;
+GO
+
+-- 2️⃣ Long Running Queries (last week)
+PRINT '--- LONG RUNNING QUERIES (Last 7 Days) ---';
+SELECT TOP 10
+    DB_NAME(st.dbid) AS DatabaseName,
+    qs.execution_count,
+    qs.total_elapsed_time/1000 AS TotalDuration_ms,
+    (qs.total_elapsed_time / qs.execution_count)/1000 AS AvgDuration_ms,
+    qs.last_execution_time,
+    SUBSTRING(st.text, (qs.statement_start_offset/2)+1,
+        ((CASE qs.statement_end_offset
+          WHEN -1 THEN DATALENGTH(st.text)
+          ELSE qs.statement_end_offset END
+          - qs.statement_start_offset)/2) + 1) AS QueryText
+FROM sys.dm_exec_query_stats AS qs
+CROSS APPLY sys.dm_exec_sql_text(qs.sql_handle) AS st
+WHERE qs.last_execution_time >= DATEADD(DAY, -7, GETDATE())
+ORDER BY AvgDuration_ms DESC;
+GO
+
+-- 3️⃣ Wait Stats (since last restart)
+PRINT '--- WAIT STATISTICS ---';
+SELECT TOP 15
+    wait_type,
+    wait_time_ms / 1000 AS WaitTime_sec,
+    waiting_tasks_count,
+    (wait_time_ms / waiting_tasks_count) AS AvgWait_ms
+FROM sys.dm_os_wait_stats
+WHERE wait_type NOT IN ('SLEEP_TASK','BROKER_TASK_STOP','BROKER_TO_FLUSH',
+                        'SQLTRACE_BUFFER_FLUSH','CLR_AUTO_EVENT')
+ORDER BY wait_time_ms DESC;
+GO
+
+-- 4️⃣ IO Performance by Database
+PRINT '--- IO STATS PER DATABASE ---';
+SELECT 
+    DB_NAME(database_id) AS DatabaseName,
+    io_stall_read_ms AS TotalReadStall_ms,
+    num_of_reads,
+    io_stall_write_ms AS TotalWriteStall_ms,
+    num_of_writes,
+    io_stall_read_ms / NULLIF(num_of_reads,0) AS AvgReadStall_ms,
+    io_stall_write_ms / NULLIF(num_of_writes,0) AS AvgWriteStall_ms,
+    sample_ms,
+    GETDATE() AS ReportDate
+FROM sys.dm_io_virtual_file_stats(NULL, NULL);
+GO
+
+-- 5️⃣ Database Size and Space Usage
+PRINT '--- DATABASE SIZE REPORT ---';
+SELECT
+    DB_NAME(database_id) AS DatabaseName,
+    type_desc AS FileType,
+    size/128 AS SizeMB,
+    FILEPROPERTY(name, 'SpaceUsed')/128 AS UsedSpaceMB,
+    (size - FILEPROPERTY(name, 'SpaceUsed'))/128 AS FreeSpaceMB
+FROM sys.master_files
+ORDER BY DatabaseName;
+GO
