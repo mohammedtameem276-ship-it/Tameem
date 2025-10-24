@@ -1,0 +1,8 @@
+SELECT 
+    name AS DatabaseName,
+    CONVERT(VARCHAR(10), state_desc) AS State,
+    ROUND(SUM(size) * 8 / 1024, 2) AS SizeMB,
+    ROUND(SUM(size) * 8 / 1024 / 1024, 2) AS SizeGB
+FROM sys.master_files
+GROUP BY name, state_desc
+ORDER BY SizeMB DESC;
