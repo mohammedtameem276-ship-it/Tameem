@@ -1,0 +1,107 @@
+/* ==============================================================
+    SQL SERVER ONE-TIME DBA EXPORT TOOLKIT - CLEAN VERSION
+    Export Logins + Server Roles + Linked Servers + All DB DDL
+============================================================== */
+SET NOCOUNT ON;
+DECLARE @CrLf CHAR(2) = CHAR(13) + CHAR(10);
+
+PRINT '=== SQL Server Export Started: ' + CAST(GETDATE() AS NVARCHAR(30)) + ' ===';
+PRINT @CrLf;
+
+/* --------------------------------------------------------------
+   1️⃣  BACKUP VALIDATION TEMPLATE (You must update path manually)
+-------------------------------------------------------------- */
+PRINT '/* BACKUP VALIDATION TEMPLATES */';
+PRINT 'RESTORE VERIFYONLY FROM DISK = ''<PATH>\<DB>_Full.bak'' WITH CHECKSUM;';
+PRINT 'GO';
+PRINT @CrLf;
+
+/* --------------------------------------------------------------
+   2️⃣  EXPORT LOGINS (with SID + password hash)
+-------------------------------------------------------------- */
+PRINT '/* CREATE LOGINS SCRIPT */';
+
+SELECT 'CREATE LOGIN [' + p.name + '] ' +
+CASE 
+    WHEN p.type_desc = 'SQL_LOGIN' THEN
+        'WITH PASSWORD = ' + CONVERT(NVARCHAR(MAX), sl.password_hash, 1) +
+        ' HASHED, SID = ' + CONVERT(NVARCHAR(MAX), p.sid, 1) +
+        ', CHECK_POLICY = OFF, CHECK_EXPIRATION = OFF;'
+    ELSE
+        'FROM WINDOWS WITH SID = ' + CONVERT(NVARCHAR(MAX), p.sid, 1) + ';'
+END
++ @CrLf + 'GO'
+FROM sys.server_principals p
+LEFT JOIN sys.sql_logins sl ON p.principal_id = sl.principal_id
+WHERE p.type IN ('S','U')
+AND p.name NOT LIKE '##%';
+
+PRINT @CrLf;
+
+/* --------------------------------------------------------------
+   3️⃣  Export Server Role Membership
+-------------------------------------------------------------- */
+PRINT '/* SERVER ROLE MEMBERSHIP */';
+
+SELECT 'ALTER SERVER ROLE [' + r.name + '] ADD MEMBER [' + m.name + '];'
++ @CrLf + 'GO'
+FROM sys.server_role_members rm
+JOIN sys.server_principals r ON rm.role_principal_id = r.principal_id
+JOIN sys.server_principals m ON rm.member_principal_id = m.principal_id;
+
+PRINT @CrLf;
+
+/* --------------------------------------------------------------
+   4️⃣  Export Linked Servers
+-------------------------------------------------------------- */
+PRINT '/* LINKED SERVERS */';
+
+SELECT '-- Linked Server: ' + s.name + @CrLf +
+'EXEC master.dbo.sp_addlinkedserver
+    @server = N''' + s.name + ''',
+    @srvproduct=N''' + ISNULL(s.product,'') + ''',
+    @provider=N''' + s.provider + ''',
+    @datasrc=N''' + ISNULL(s.data_source,'') + ''';' + @CrLf +
+'GO'
+FROM sys.servers s
+WHERE s.is_linked = 1;
+
+PRINT @CrLf;
+
+/* --------------------------------------------------------------
+   5️⃣  Export DDL for Online User Databases
+-------------------------------------------------------------- */
+DECLARE @DB SYSNAME, @SQL NVARCHAR(MAX);
+
+DECLARE db_cursor CURSOR FOR
+SELECT name
+FROM sys.databases
+WHERE database_id > 4
+AND state_desc = 'ONLINE';
+
+OPEN db_cursor;
+FETCH NEXT FROM db_cursor INTO @DB;
+
+WHILE @@FETCH_STATUS = 0
+BEGIN
+    PRINT '/* === DATABASE: ' + @DB + ' === */';
+
+    SET @SQL =
+    'SELECT ''/* '' + o.type_desc + '' */'' + CHAR(13) +
+            OBJECT_DEFINITION(o.object_id) + CHAR(13) + ''GO''
+     FROM ' + QUOTENAME(@DB) + '.sys.objects o
+     WHERE o.type IN (''U'',''V'',''P'',''FN'',''TF'',''IF'')
+     AND OBJECT_DEFINITION(o.object_id) IS NOT NULL
+     ORDER BY o.type, o.name';
+
+    EXEC(@SQL);
+
+    PRINT @CrLf;
+
+    FETCH NEXT FROM db_cursor INTO @DB;
+END
+
+CLOSE db_cursor;
+DEALLOCATE db_cursor;
+
+PRINT '=== EXPORT COMPLETE ===';
