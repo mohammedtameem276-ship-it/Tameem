@@ -1,0 +1,201 @@
+Lessons Learned – TDE Implementation
+1. Encryption / Decryption Throughput Slower Than Expected
+
+Actual encryption and decryption speeds were lower than initial estimates.
+
+This extended the overall completion timeline, especially for larger databases.
+
+Improvement Action:
+
+Perform throughput benchmarking in non-production environments.
+
+Adjust implementation timelines based on realistic performance baselines.
+
+Management Takeaway:
+
+Timelines should be based on measured performance, not assumptions.
+
+2. Validation and Synchronization Took Longer Than Planned
+
+Post-encryption validation and synchronization exceeded the planned maintenance window.
+
+Testing was largely sequential, which increased total duration.
+
+Improvement Action:
+
+Enable testing-on-the-go, with the testing team validating objects and data as encryption progresses.
+
+Run validation tasks in parallel where possible.
+
+Management Takeaway:
+
+Parallel testing significantly reduces overall project duration.
+
+3. Limited Real-Time Visibility Into Encryption Progress
+
+Native SQL Server monitoring provided limited real-time insights.
+
+Progress tracking required manual checks and estimation.
+
+Improvement Action:
+
+Integrate monitoring tools such as Datadog to track:
+
+Encryption progress
+
+CPU and I/O impact
+
+Long-running background tasks
+
+Management Takeaway:
+
+Enhanced observability improves decision-making and confidence during critical changes.
+
+Summary for Leadership
+
+No failures occurred, but timeline accuracy and visibility can be improved.
+
+Future implementations will benefit from:
+
+Performance baselining
+
+Parallel testing
+
+Enhanced real-time monitoring
+
+Overall Result: Lessons learned will improve predictability, reduce maintenance windows, and increase operational transparency in future TDE deployments.
+
+If you want, I can:
+
+✅ Convert this into single-slide executive bullets
+
+✅ Add Datadog-specific metrics examples
+
+✅ Reword it to align with PMO or audit language
+
+Just tell me.
+
+✅ Add Datadog-specific metrics examples 
+
+Here are clear, manager-ready Datadog metric examples you can reference in your presentation. These show what visibility was missing and how Datadog addresses it in practical terms.
+
+Datadog Metrics to Improve TDE Visibility
+1. Encryption / Decryption Progress Tracking
+
+Metrics & Signals:
+
+SQL Server background task duration
+
+Long-running internal processes
+
+Database file read/write latency during encryption
+
+Datadog Use Case:
+
+Dashboard showing encryption progress trends correlated with I/O and CPU usage
+
+Alerts when encryption throughput drops below expected thresholds
+
+Management Value:
+Real-time understanding of progress instead of manual estimation.
+
+2. CPU Utilization During Encryption
+
+Metrics:
+
+system.cpu.user
+
+system.cpu.system
+
+SQL Server process CPU usage
+
+Datadog Use Case:
+
+Track CPU spikes caused by encryption scans
+
+Validate that encryption load stays within acceptable limits
+
+Management Value:
+Prevents unexpected performance degradation during maintenance windows.
+
+3. Disk I/O Impact and Throughput
+
+Metrics:
+
+Disk read/write latency
+
+Disk queue length
+
+IOPS per data and log volume
+
+Datadog Use Case:
+
+Identify I/O bottlenecks slowing encryption/decryption
+
+Correlate slow encryption with storage performance
+
+Management Value:
+Enables accurate timeline forecasting and root-cause analysis.
+
+4. TempDB Activity Monitoring
+
+Metrics:
+
+TempDB data and log file growth
+
+TempDB write latency
+
+Allocation waits related to tempdb
+
+Datadog Use Case:
+
+Early detection of tempdb contention caused by TDE
+
+Prevents secondary performance issues during encryption
+
+Management Value:
+Reduces risk of unexpected system-wide impact.
+
+5. Database-Level Health Indicators
+
+Metrics:
+
+Active connections
+
+Blocking sessions
+
+Long-running queries
+
+Datadog Use Case:
+
+Ensure business workloads remain stable during encryption
+
+Immediate alerting if user impact occurs
+
+Management Value:
+Maintains service reliability during security changes.
+
+6. Alerting & Executive Visibility
+
+Datadog Dashboards & Alerts:
+
+Alert if encryption-related CPU or I/O exceeds thresholds
+
+Timeline view correlating encryption activity with system metrics
+
+Management Value:
+Provides leadership with confidence, transparency, and faster decision-making.
+
+Executive Summary Slide (Optional)
+
+“Integrating Datadog monitoring during TDE enables real-time visibility into encryption progress, performance impact, and system health—reducing risk and improving predictability.”
+
+If you want, I can:
+
+🔹 Compress this into 1 executive slide
+
+🔹 Map metrics directly to Datadog SQL Server integration names
+
+🔹 Add sample dashboard titles/screens
+
+Just say which one you want.
